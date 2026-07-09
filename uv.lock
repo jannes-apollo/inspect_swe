@@ -10,6 +10,16 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[options]
+exclude-newer = "2026-06-24T19:09:25.642183Z"
+exclude-newer-span = "P7D"
+
+[options.exclude-newer-package]
+inspect-ai = false
+inspect-swe = false
+inspect-scout = false
+openai = "2026-06-03T00:00:00Z"
+
 [[package]]
 name = "agent-client-protocol"
 version = "0.10.1"
@@ -222,17 +232,16 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.10.0"
+version = "4.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "idna" },
-    { name = "sniffio" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/b4/636b3b65173d3ce9a38ef5f0522789614e590dab6a8d505340a4efe4c567/anyio-4.10.0.tar.gz", hash = "sha256:3f3fae35c96039744587aa5b8371e7e8e603c0702999535961dd336026973ba6", size = 213252, upload-time = "2025-08-04T08:54:26.451Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/b5/001890774a9552aff22502b8da382593109ce0c95314abaebbb116567545/anyio-4.14.0.tar.gz", hash = "sha256:b47c1f9ccf73e67021df785332508f99379c68fa7d0684e8e3492cb1d4b23f89", size = 253586, upload-time = "2026-06-15T22:00:49.021Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/12/e5e0282d673bb9746bacfb6e2dba8719989d3660cdb2ea79aee9a9651afb/anyio-4.10.0-py3-none-any.whl", hash = "sha256:60e474ac86736bbfd6f210f7a61218939c318f43f9972497381f1c5e930ed3d1", size = 107213, upload-time = "2025-08-04T08:54:24.882Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/16/9826f089383c593cdfc4a6e5aca94d9e91ae1692c57af82c3b2aa5e810f7/anyio-4.14.0-py3-none-any.whl", hash = "sha256:dd9b7a2a9799ed6552fde617b2c5df02b7fdd7d88392fc48101e51bae46164d9", size = 123506, upload-time = "2026-06-15T22:00:47.595Z" },
 ]
 
 [[package]]
@@ -1206,8 +1215,8 @@ wheels = [
 
 [[package]]
 name = "inspect-ai"
-version = "0.3.235"
-source = { registry = "https://pypi.org/simple" }
+version = "0.3.245.dev7+g26395f389"
+source = { git = "https://github.com/UKGovernmentBEIS/inspect_ai?rev=main#26395f389f0d7435e343aa835e66cb7ae8cad71c" }
 dependencies = [
     { name = "agent-client-protocol" },
     { name = "aioboto3" },
@@ -1250,10 +1259,6 @@ dependencies = [
     { name = "zipfile-zstd", marker = "python_full_version < '3.14'" },
     { name = "zipp" },
     { name = "zstandard" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d3/9f/9b3f384517723880a84c6a37a7d881541a91dc284403f403e81d1504256b/inspect_ai-0.3.235.tar.gz", hash = "sha256:14b5fd878fe4a14109d2e4a46548c6af5fbdc06e3425bb86f13dc154e342d9cb", size = 46965608, upload-time = "2026-06-03T22:55:19.49Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/cc/93f35bc14c6036f774dab0d6c379cc3a72efd9153e19ac7c6b9f88f5cf99/inspect_ai-0.3.235-py3-none-any.whl", hash = "sha256:3690a20dc4d7fe0f52b395d0a4d2286749195a27f03350319a66d6116ececbc4", size = 36437159, upload-time = "2026-06-03T22:55:08.961Z" },
 ]
 
 [[package]]
@@ -1346,7 +1351,7 @@ requires-dist = [
     { name = "griffe", marker = "extra == 'dev'", specifier = ">=2" },
     { name = "griffe", marker = "extra == 'doc'", specifier = ">=2" },
     { name = "httpx" },
-    { name = "inspect-ai", specifier = ">=0.3.235" },
+    { name = "inspect-ai", git = "https://github.com/UKGovernmentBEIS/inspect_ai?rev=main" },
     { name = "inspect-evals", marker = "extra == 'dev'" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'dev'" },
     { name = "ipython", marker = "extra == 'dev'" },
