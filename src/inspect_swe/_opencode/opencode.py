@@ -2,7 +2,8 @@ import json
 import shlex
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Literal, Sequence
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal, Sequence, cast
 
 from inspect_ai.agent import (
     Agent,
@@ -13,9 +14,28 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.agent._bridge.sandbox.types import SandboxAgentBridge
+from inspect_ai.agent._bridge.util import bridge_model_generate
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageSystem,
+    ChatMessageUser,
+    GenerateConfig,
+    GenerateFilter,
+    GenerateInput,
+    Model,
+    ModelOutput,
+)
+from inspect_ai.model._model import use_model_event_sink
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import (
+    MCPServerConfig,
+    Skill,
+    ToolChoice,
+    ToolInfo,
+    install_skills,
+    read_skills,
+)
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
@@ -28,6 +48,11 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_opencode_setup
+
+_ModelFilter = Callable[
+    [Model, list[ChatMessage], list[ToolInfo], ToolChoice | None, GenerateConfig],
+    Awaitable[ModelOutput | GenerateInput | None],
+]
 
 
 @agent
@@ -115,6 +140,9 @@ def opencode(
     )
 
     async def execute(state: AgentState) -> AgentState:
+        if provider_id == "openai":
+            _patch_openai_responses_function_call_items()
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "opencode_model_port"
         port = store().get(MODEL_PORT, 3000) + 1
@@ -124,12 +152,19 @@ def opencode(
             state,
             model=model,
             model_aliases=model_aliases,
-            filter=filter,
+            filter=None,
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
         ) as bridge:
+            _ignore_title_generation_state(bridge)
+            bridge.filter = _make_combined_filter(
+                bridge=bridge,
+                filter=filter,
+                serialize_tool_calls=False,
+            )
+
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
@@ -302,6 +337,140 @@ def opencode(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+def _ignore_title_generation_state(bridge: SandboxAgentBridge) -> None:
+    def track_state(input: list[ChatMessage], output: ModelOutput) -> _TrackStateUpdate:
+        if not _is_title_generation(input):
+            messages = input + [output.message]
+            if len(messages) > bridge._last_message_count:
+                bridge.state.messages = messages
+                bridge.state.output = output
+            bridge._last_message_count = len(messages)
+        checkpointer = getattr(bridge, "_cp", None)
+        tick = getattr(checkpointer, "tick", None)
+        return _TrackStateUpdate(tick)
+
+    bridge._track_state = track_state  # type: ignore[method-assign]
+
+
+class _TrackStateUpdate:
+    def __init__(self, tick: Callable[[], Awaitable[None]] | None) -> None:
+        self._tick = tick
+
+    def __await__(self) -> Any:
+        if self._tick is None:
+            async def noop() -> None:
+                return None
+
+            return noop().__await__()
+        return self._tick().__await__()
+
+
+def _is_title_generation(messages: list[ChatMessage]) -> bool:
+    user_messages = [
+        message for message in messages if isinstance(message, ChatMessageUser)
+    ]
+    return (
+        len(user_messages) >= 2
+        and user_messages[0].text.strip() == "Generate a title for this conversation:"
+    )
+
+
+def _make_combined_filter(
+    *,
+    bridge: SandboxAgentBridge,
+    filter: GenerateFilter | None,
+    serialize_tool_calls: bool,
+) -> GenerateFilter:
+    async def combined_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        if not serialize_tool_calls:
+            if filter is None:
+                return None
+            return await cast(_ModelFilter, filter)(
+                model, messages, tools, tool_choice, config
+            )
+
+        prepared_messages = messages
+        prepared_tools = tools
+        prepared_tool_choice = tool_choice
+        prepared_config = config
+        if filter is not None:
+            result = await cast(_ModelFilter, filter)(
+                model, messages, tools, tool_choice, config
+            )
+            if isinstance(result, ModelOutput):
+                return _serialize_tool_calls(result)
+            if isinstance(result, GenerateInput):
+                prepared_messages = result.input
+                prepared_tools = result.tools
+                prepared_tool_choice = result.tool_choice
+                prepared_config = result.config
+
+        prepared_config.parallel_tool_calls = False
+        with bridge_model_generate(), use_model_event_sink(bridge.model_event_sink):
+            output = await model.generate(
+                input=prepared_messages,
+                tools=prepared_tools,
+                tool_choice=prepared_tool_choice,
+                config=prepared_config,
+            )
+        return _serialize_tool_calls(output)
+
+    return combined_filter
+
+
+def _serialize_tool_calls(output: ModelOutput) -> ModelOutput:
+    choices = []
+    changed = False
+    for choice in output.choices:
+        message = choice.message
+        if message.tool_calls and len(message.tool_calls) > 1:
+            message = message.model_copy(update={"tool_calls": [message.tool_calls[0]]})
+            choice = choice.model_copy(update={"message": message})
+            changed = True
+        choices.append(choice)
+    if not changed:
+        return output
+    return output.model_copy(update={"choices": choices})
+
+
+def _patch_openai_responses_function_call_items() -> None:
+    import inspect_ai.agent._bridge.responses_impl as responses_impl
+
+    if getattr(responses_impl, "_opencode_function_call_item_patch", False):
+        return
+
+    original = responses_impl.responses_output_items_from_assistant_message
+
+    def patched_responses_output_items_from_assistant_message(
+        message: Any,
+        tool_namespaces: dict[str, str] | None = None,
+    ) -> list[Any]:
+        items = original(message, tool_namespaces)
+        patched_items = []
+        for item in items:
+            if getattr(item, "type", None) == "function_call":
+                updates: dict[str, object] = {}
+                if getattr(item, "id", None) is None:
+                    updates["id"] = getattr(item, "call_id")
+                if getattr(item, "status", None) is None:
+                    updates["status"] = "completed"
+                if updates:
+                    item = item.model_copy(update=updates)
+            patched_items.append(item)
+        return patched_items
+
+    responses_impl.responses_output_items_from_assistant_message = (
+        patched_responses_output_items_from_assistant_message
+    )
+    responses_impl._opencode_function_call_item_patch = True
 
 
 def resolve_mcp_servers(
